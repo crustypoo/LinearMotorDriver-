@@ -245,21 +245,6 @@ typedef struct PARAM_GROUP_L{
 	uint16_t STEPOUT_DETECT_ACT;
 } PARAM_GROUP_L;
 
-
-typedef struct PARAM_GROUP_SYS{
-	uint16_t MOT_ROT_DIR;
-	uint16_t STEPOUT_DIR;
-	uint16_t MOTOR_STEP_ANGLE;
-	uint32_t ELEC_GEAR_A;
-	uint32_t ELEC_GEAR_B;
-	uint16_t COM_AXIS;
-	uint16_t _PARITY;
-	uint16_t _STOP_BIT;
-	uint16_t WAITING_TIME;
-	uint16_t COM_TIMEOUT;
-	uint16_t COM_ERR_ALM;
-}PARAM_GROUP_SYS;
-
 // typedef PARAM GRP STRUCTS END
 
 // '*.h'exposed functions
@@ -326,72 +311,105 @@ modbus_t * connect_lrd(const char * addr){
 }
 
 int set_sys_param(modbus_t * ctx){
-	int _size = (int)(sizeof(PARAM_GROUP_SYS) / 2);
+	int _size = 13;
 
-	union{
-		uint16_t _pg_a[_size];
-		PARAM_GROUP_SYS pgs;
-	} _container;
-
-	_container.pgs.MOT_ROT_DIR = GRP_S1;
-	_container.pgs.STEPOUT_DIR = GRP_S2;
-	_container.pgs.MOTOR_STEP_ANGLE = GRP_S3;
-	_container.pgs.ELEC_GEAR_A = _swap_2byte_order(GRP_S4);
-	_container.pgs.ELEC_GEAR_B = _swap_2byte_order(GRP_S5);
-	_container.pgs.COM_AXIS = GRP_S6;
-	_container.pgs._PARITY = GRP_S7;
-	_container.pgs._STOP_BIT = GRP_S8;
-	_container.pgs.WAITING_TIME = GRP_S9;
-	_container.pgs.COM_TIMEOUT = GRP_S10;
-	_container.pgs.COM_ERR_ALM = GRP_S11;
-
+	uint16_t pgs[_size];
 	uint16_t _buff[_size];
 	bool _write_params = false;
 
-	int err = modbus_read_registers(ctx, GRP_S_ADDR, 1, _buff[0]);
+	uint32_t S4 = GRP_S4;
+	uint32_t S5 = GRP_S5;
+
+	pgs[0] = GRP_S1;
+	pgs[1] = GRP_S2;
+	pgs[2] = GRP_S3;
+	pgs[3] = S4 << 16;
+	pgs[4] = S4;
+	pgs[5] = S5 << 16;
+	pgs[6] = S5;
+	pgs[7] = GRP_S6;
+	pgs[8] = GRP_S7;
+	pgs[9] = GRP_S8;
+	pgs[10] = GRP_S9 * 10;
+	pgs[11] = GRP_S10;
+	pgs[12] = GRP_S11;
+
+	int err = modbus_read_registers(ctx, GRP_S_ADDR, 1, &_buff[0]);
 	if (err < 0){
 		if (_debug){
-			printf(" >> ERROR in 'set_sys_param()' :: 'modbus_read_register()' :: READ_ FAILURE\n");
-			printf
+			printf(" >> ERROR in 'set_sys_param()' :: 'modbus_read_registers()' :: READ_ FAILURE\n");
+			printf(" >> ATTEMPTING TO WRITE PARAMS\n");
 		}
+		_write_params = true;
 	}
 
-	int i = 0;
-	for(i = 0; i < _size; i++){
-		uint16_t _not_same = _buff[i] ^ _container._pg_a[i];
-		if (_not_same > 0)
-			_write_params = true;
-		printf("%d, %d\n", _buff[i], _container._pg_a[i]);
+	err = modbus_read_registers(ctx, GRP_S_ADDR2, 7, &_buff[1]);
+	if (err < 0){
+		if (_debug){
+			printf(" >> ERROR in 'set_sys_param()' :: 'modbus_Read_registers()' :: READ FAILURE\n");
+			printf(" >> ATTEMPTING TO WRITE PARAMS\n");
+		}
+		_write_params = true;
+	}
+
+	err = modbus_read_registers(ctx, GRP_S_ADDR3, 5, &_buff[8]);
+	if (err < 0){
+		if (_debug){
+			printf(" >> ERROR in 'set_sys_param()' :: 'modbus_Read_registers()' :: READ FAILURE\n");
+			printf(" >> ATTEMPTING TO WRITE PARAMS\n");
+		}
+		_write_params = true;
+	}
+
+	if (_write_params == false){
+		int i = 0;
+		for(i = 0; i < _size; i++){
+			uint16_t _not_same = _buff[i] ^ pgs[i];
+			if (_not_same > 0)
+				_write_params = true;
+			printf("%x, %x\n", _buff[i], pgs[i]);
+		}
 	}
 
 	if (_write_params){
 		if (_debug)
 			printf(" >> No match found through read, writing correct sys params...\n");
-		err = modbus_write_register(ctx, GRP_S_ADDR, &(_container._pg_a[0]));
+		err = modbus_write_register(ctx, GRP_S_ADDR, &pgs[0]);
 		if (err < 0){
 			if (_debug)
-				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register' :: Could not set Motor Rotation Direction\n");
-			return -1;
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: Failed to set mot rot dir\n");
 		}
-
-		err = modbus_write_registers(ctx, GRP_S_ADDR2, MAX_MOD_MESSAGE_SIZE, &_container._pg_a[1]);
+		err = modbus_write_registers(ctx, GRP_S_ADDR2, 7, &pgs[1]);
 		if (err < 0){
 			if (_debug)
-				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: Could not set sys params\n");
-			return -1;
-		} else if (err > 0 && err < MAX_MOD_MESSAGE_SIZE){
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: Failed write mot op vars\n");
+		} else if (err > 0 && err < 7){
 			if (_debug)
-				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: RESOLVING MISSED WRITES\n");
-
-			uint16_t _offset_addr = GRP_S_ADDR2 + err;
-			err = modbus_write_registers(ctx, _offset_addr, MAX_MOD_MESSAGE_SIZE - err, &_container._pg_a[1 + err]);
-			if (err < 0){
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: RESOLVING MISSED WRITES");
+			uint16_t offset_addr = GRP_S_ADDR2 + err;
+			err = modbus_write_registers(ctx, offset_addr, 7 - err, &pgs[1 + err]);
+			if (err < (7 - err)){
 				if (_debug)
-					printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: UNRESOLVED WRITES\n");
-				return -1;
+					printf(" >> ERROR could not resolve missed writes");
 			}
 		}
+		err = modbus_write_registers(ctx, GRP_S_ADDR3, 5, &pgs[8]);
+		if (err < 0){
+			if (_debug)
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: Failed write mot op vars\n");
+		} else if (err > 0 && err < 7){
+			if (_debug)
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: RESOLVING MISSED WRITES");
+			uint16_t offset_addr = GRP_S_ADDR2 + err;
+			err = modbus_write_registers(ctx, offset_addr, 7 - err, &pgs[1 + err]);
+			if (err < (7 - err)){
+				if (_debug)
+					printf(" >> ERROR could not resolve missed writes");
+			}
+		}
+
 	}
+
 	return 0;
 }
 
