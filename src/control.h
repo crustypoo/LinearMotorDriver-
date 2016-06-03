@@ -94,8 +94,22 @@
 #define GRP_L1 1
 #define GRP_L2 0
 
+// GRP SYS
+#define GRP_S1 1
+#define GRP_S2 0
+#define GRP_S3 0
+#define GRP_S4 500
+#define GRP_S5 500
+#define GRP_S6 1
+#define GRP_S7 1
+#define GRP_S8 0
+#define GRP_S9 100.0
+#define GRP_S10 0
+#define GRP_S11 5
+
 modbus_t * connect_lrd(const char * addr);
-int set_lrd_driver(modbus_t * ctx);
+int set_sys_param(modbus_t * ctx);
+int set_op_param(modbus_t * ctx);
 int home_stage(modbus_t * ctx);
 
 // Library wide debug variable

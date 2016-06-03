@@ -13,9 +13,11 @@ int main(){
 	uint16_t a[2];
 	modbus_read_registers(ctx, 0x021C, 2, a);
 	printf("%x, %x\n", a[0], a[1]);
-	int err = set_lrd_driver(ctx);
+	// int err = set_op_param(ctx);
 
-	err = home_stage(ctx);
+	set_sys_param(ctx);
+
+	home_stage(ctx);
 
 	modbus_close(ctx);
 	modbus_free(ctx);

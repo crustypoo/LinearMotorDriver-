@@ -116,6 +116,9 @@
 #define GRP_J_ADDR 0x0252
 #define GRP_K_ADDR 0x0254
 #define GRP_L_ADDR 0x025B
+#define GRP_S_ADDR 0x030E
+#define GRP_S_ADDR2 0x0310
+#define GRP_S_ADDR3 0x0318
 // define Parameter Start ADDR END
 
 
@@ -241,14 +244,31 @@ typedef struct PARAM_GROUP_L{
 	uint16_t COM_TIMEOUT_ACT;
 	uint16_t STEPOUT_DETECT_ACT;
 } PARAM_GROUP_L;
+
+
+typedef struct PARAM_GROUP_SYS{
+	uint16_t MOT_ROT_DIR;
+	uint16_t STEPOUT_DIR;
+	uint16_t MOTOR_STEP_ANGLE;
+	uint32_t ELEC_GEAR_A;
+	uint32_t ELEC_GEAR_B;
+	uint16_t COM_AXIS;
+	uint16_t _PARITY;
+	uint16_t _STOP_BIT;
+	uint16_t WAITING_TIME;
+	uint16_t COM_TIMEOUT;
+	uint16_t COM_ERR_ALM;
+}PARAM_GROUP_SYS;
+
 // typedef PARAM GRP STRUCTS END
 
 // '*.h'exposed functions
 modbus_t * connect_lrd(const char * addr);
-int set_lrd_driver(modbus_t * ctx);
+int set_sys_param(modbus_t * ctx);
+int set_op_param(modbus_t * ctx);
 int home_stage(modbus_t * ctx);
 
-// src only functions
+// '*.c' only functions
 static int _set_grp_a(modbus_t * ctx);
 static int _set_grp_b(modbus_t * ctx);
 static int _set_grp_c(modbus_t * ctx);
@@ -261,7 +281,7 @@ static int _set_grp_i(modbus_t * ctx);
 static int _set_grp_j(modbus_t * ctx);
 static int _set_grp_k(modbus_t * ctx);
 static int _set_grp_l(modbus_t * ctx);
-static uint32_t _swap_16bit(uint32_t input);
+static uint32_t _swap_2byte_order(uint32_t input);
 
 modbus_t * connect_lrd(const char * addr){
 	modbus_t * ctx = modbus_new_rtu(addr, BAUDRATE, PARITY, DATABIT, STOPBIT);
@@ -305,21 +325,112 @@ modbus_t * connect_lrd(const char * addr){
 	return ctx;
 }
 
-int set_lrd_driver(modbus_t * ctx){
-	int err = _set_grp_a(ctx);
-	err = _set_grp_b(ctx);
-	err = _set_grp_c(ctx);
-	err = _set_grp_d(ctx);
-	err = _set_grp_e(ctx);
-	err = _set_grp_f(ctx);
-	err = _set_grp_g(ctx);
-	err = _set_grp_h(ctx);
-	err = _set_grp_i(ctx);
-	err = _set_grp_j(ctx);
-	err = _set_grp_k(ctx);
-	err = _set_grp_l(ctx);
-	printf("%d\n", err);
-	return err;
+int set_sys_param(modbus_t * ctx){
+	int _size = (int)(sizeof(PARAM_GROUP_SYS) / 2);
+
+	union{
+		uint16_t _pg_a[_size];
+		PARAM_GROUP_SYS pgs;
+	} _container;
+
+	_container.pgs.MOT_ROT_DIR = GRP_S1;
+	_container.pgs.STEPOUT_DIR = GRP_S2;
+	_container.pgs.MOTOR_STEP_ANGLE = GRP_S3;
+	_container.pgs.ELEC_GEAR_A = _swap_2byte_order(GRP_S4);
+	_container.pgs.ELEC_GEAR_B = _swap_2byte_order(GRP_S5);
+	_container.pgs.COM_AXIS = GRP_S6;
+	_container.pgs._PARITY = GRP_S7;
+	_container.pgs._STOP_BIT = GRP_S8;
+	_container.pgs.WAITING_TIME = GRP_S9;
+	_container.pgs.COM_TIMEOUT = GRP_S10;
+	_container.pgs.COM_ERR_ALM = GRP_S11;
+
+	uint16_t _buff[_size];
+	bool _write_params = false;
+
+	int err = modbus_read_registers(ctx, GRP_S_ADDR, 1, _buff[0]);
+	if (err < 0){
+		if (_debug){
+			printf(" >> ERROR in 'set_sys_param()' :: 'modbus_read_register()' :: READ_ FAILURE\n");
+			printf
+		}
+	}
+
+	int i = 0;
+	for(i = 0; i < _size; i++){
+		uint16_t _not_same = _buff[i] ^ _container._pg_a[i];
+		if (_not_same > 0)
+			_write_params = true;
+		printf("%d, %d\n", _buff[i], _container._pg_a[i]);
+	}
+
+	if (_write_params){
+		if (_debug)
+			printf(" >> No match found through read, writing correct sys params...\n");
+		err = modbus_write_register(ctx, GRP_S_ADDR, &(_container._pg_a[0]));
+		if (err < 0){
+			if (_debug)
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register' :: Could not set Motor Rotation Direction\n");
+			return -1;
+		}
+
+		err = modbus_write_registers(ctx, GRP_S_ADDR2, MAX_MOD_MESSAGE_SIZE, &_container._pg_a[1]);
+		if (err < 0){
+			if (_debug)
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: Could not set sys params\n");
+			return -1;
+		} else if (err > 0 && err < MAX_MOD_MESSAGE_SIZE){
+			if (_debug)
+				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: RESOLVING MISSED WRITES\n");
+
+			uint16_t _offset_addr = GRP_S_ADDR2 + err;
+			err = modbus_write_registers(ctx, _offset_addr, MAX_MOD_MESSAGE_SIZE - err, &_container._pg_a[1 + err]);
+			if (err < 0){
+				if (_debug)
+					printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: UNRESOLVED WRITES\n");
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
+int set_op_param(modbus_t * ctx){
+	int issue_track = 0;
+
+	if (_set_grp_a(ctx) < 0)
+		issue_track = 1;
+	if (_set_grp_b(ctx) < 0)
+		issue_track = 2;
+	if (_set_grp_c(ctx) < 0)
+		issue_track = 3;
+	if (_set_grp_d(ctx) < 0)
+		issue_track = 4;
+	if (_set_grp_e(ctx) < 0)
+		issue_track = 5;
+	if (_set_grp_f(ctx) < 0)
+		issue_track = 6;
+	if (_set_grp_g(ctx) < 0)
+		issue_track = 7;
+	if (_set_grp_h(ctx) < 0)
+		issue_track = 8;
+	if (_set_grp_i(ctx) < 0)
+		issue_track = 9;
+	if (_set_grp_j(ctx) < 0)
+		issue_track = 10;
+	if (_set_grp_k(ctx) < 0)
+		issue_track = 11;
+	if (_set_grp_l(ctx) < 0)
+		issue_track = 12;
+
+	if (issue_track > 0){
+		char _ascii_code = ((issue_track - 1) + 65);
+		if (_debug)
+			printf(" >> ERROR in 'set_lrd_driver()' :: Problem in setting PARAM GRP %c\n", _ascii_code);
+		return -1;
+	}
+
+	return 0;
 }
 
 int home_stage(modbus_t * ctx){
@@ -367,6 +478,8 @@ int home_stage(modbus_t * ctx){
 
 	return 0;
 }
+
+
 
 static int _set_grp_a(modbus_t * ctx){
 	if (_debug)
@@ -489,9 +602,9 @@ static int _set_grp_c(modbus_t * ctx){
 	pgc->HOMES_CON_CFG = GRP_C8;
 	pgc->SLIT_CONTACT = GRP_C9;
 	pgc->OVERTRAVEL_ACT = GRP_C10;
-	pgc->PRESET_POS = _swap_16bit(GRP_C11);
-	pgc->AREA1 = _swap_16bit(GRP_C12);
-	pgc->AREA2 = _swap_16bit(GRP_C13);
+	pgc->PRESET_POS = _swap_2byte_order(GRP_C11);
+	pgc->AREA1 = _swap_2byte_order(GRP_C12);
+	pgc->AREA2 = _swap_2byte_order(GRP_C13);
 
 	int _size = (int)(sizeof(PARAM_GROUP_C) / 2);
 
@@ -557,7 +670,7 @@ static int _set_grp_d(modbus_t * ctx){
 		return -1;
 	}
 
-	pgd->ENC_CNT_PRESET = _swap_16bit(GRP_D1);
+	pgd->ENC_CNT_PRESET = _swap_2byte_order(GRP_D1);
 	pgd->OP_CURRENT = GRP_D2;
 	pgd->STBY_CURRENT = GRP_D3;
 
@@ -606,9 +719,9 @@ static int _set_grp_e(modbus_t * ctx){
 		return -1;
 	}
 
-	pge->COMMON_ACCEL_RATE = _swap_16bit(GRP_E1 * 1000);
-	pge->COMMON_DECCEL_RATE = _swap_16bit(GRP_E2 * 1000);
-	pge->STARTING_SPD = _swap_16bit(GRP_E3);
+	pge->COMMON_ACCEL_RATE = _swap_2byte_order(GRP_E1 * 1000);
+	pge->COMMON_DECCEL_RATE = _swap_2byte_order(GRP_E2 * 1000);
+	pge->STARTING_SPD = _swap_2byte_order(GRP_E3);
 
 	int _size = (int)(sizeof(PARAM_GROUP_E) / 2);
 
@@ -654,9 +767,9 @@ static int _set_grp_f(modbus_t * ctx){
 		return -1;
 	}
 
-	pgf->JOG_SPD = _swap_16bit(GRP_F1);
-	pgf->JOG_ACCEL_RATE = _swap_16bit(GRP_F2 * 1000);
-	pgf->JOG_START_SPD = _swap_16bit(GRP_F3);
+	pgf->JOG_SPD = _swap_2byte_order(GRP_F1);
+	pgf->JOG_ACCEL_RATE = _swap_2byte_order(GRP_F2 * 1000);
+	pgf->JOG_START_SPD = _swap_2byte_order(GRP_F3);
 	pgf->ACCEL_RATE_TYPE = GRP_F4;
 	pgf->HOME_MODE = GRP_F5;
 
@@ -704,10 +817,10 @@ static int _set_grp_g(modbus_t * ctx){
 		return -1;
 	}
 
-	pgg->OP_SPD_HOME = _swap_16bit(GRP_G1);
-	pgg->ACCEL_RATE_HOME = _swap_16bit(GRP_G2 * 1000);
-	pgg->START_SPD_HOME = _swap_16bit(GRP_G3);
-	pgg->POS_OFFSET_HOME = _swap_16bit(GRP_G4);
+	pgg->OP_SPD_HOME = _swap_2byte_order(GRP_G1);
+	pgg->ACCEL_RATE_HOME = _swap_2byte_order(GRP_G2 * 1000);
+	pgg->START_SPD_HOME = _swap_2byte_order(GRP_G3);
+	pgg->POS_OFFSET_HOME = _swap_2byte_order(GRP_G4);
 	pgg->START_DIR_HOME = GRP_G5;
 	pgg->SLIT_DETECT = GRP_G6;
 	pgg->TIM_DETECT = GRP_G7;
@@ -856,8 +969,8 @@ static int _set_grp_k(modbus_t * ctx){
 		PARAM_GROUP_K pg_s;
 	} _container;
 
-	_container.pg_s.POS_S_LIMIT = _swap_16bit(GRP_K1);
-	_container.pg_s.NEG_S_LIMIT = _swap_16bit(GRP_K2);
+	_container.pg_s.POS_S_LIMIT = _swap_2byte_order(GRP_K1);
+	_container.pg_s.NEG_S_LIMIT = _swap_2byte_order(GRP_K2);
 	_container.pg_s.DISPLAY_MODE = GRP_K3;
 	_container.pg_s.DATA_SET = GRP_K4;
 
@@ -923,7 +1036,7 @@ static int _set_grp_l(modbus_t * ctx){
 }
 
 
-static uint32_t _swap_16bit(uint32_t input){
+static uint32_t _swap_2byte_order(uint32_t input){
 	uint32_t output = input;
 
 	output = ( output >> 16 ) | (input << 16);
