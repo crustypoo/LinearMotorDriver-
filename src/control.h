@@ -65,7 +65,7 @@
 #define GRP_F5 0
 
 // GRP G
-#define GRP_G1 50
+#define GRP_G1 100
 #define GRP_G2 30.000
 #define GRP_G3 100
 #define GRP_G4 0
@@ -107,10 +107,19 @@
 #define GRP_S10 0
 #define GRP_S11 5
 
+// RASTERING OP CONDS
+#define ROP_SPD 3000
+#define ROP_ACCEL 30.000
+#define ROP_MODE 1
+#define ROP_DWELL 0
+
+
 modbus_t * connect_lrd(const char * addr);
 int set_sys_param(modbus_t * ctx);
 int set_op_param(modbus_t * ctx);
 int home_stage(modbus_t * ctx);
+
+static int _set_op_data_abs(modbus_t * ctx, int data_no, int pos, int op_spd, double accel_rate, double deccel_rate, int dwell_time);
 
 // Library wide debug variable
 bool _debug;

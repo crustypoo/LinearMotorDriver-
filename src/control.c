@@ -24,6 +24,14 @@
 // define random register ADDR END
 
 
+// define reserved data_no's
+#define R_OP_HIGH 4
+#define R_OP_LOW 3
+#define HOME 0
+
+// define reserved data_no's end
+
+
 // define Parameter Start ADDR
 /**************************************************************
  * REGISTRY GUIDE
@@ -124,9 +132,10 @@
 
 // define OPERATION DATA AREA
 #define OP_POS_ADDR_START 0x0402
-#define OP_SPPED_ADDR_START 0x0502
+#define OP_SPEED_ADDR_START 0x0502
 #define OP_POS_MODE_ADDR_START 0x0601
-#define OP_SEQ_MODE_ADDR_START 0x0701
+#define OP_MODE_ADDR_START 0x0701
+#define OP_SEQ_MODE_ADDR_START 0x0801
 #define OP_ACCEL_RATE_ADDR_START 0x0902
 #define OP_DECCEL_RATE_ADDR_START 0x0A02
 #define OP_DWELL_TIME_ADDR_START 0x0C01
@@ -155,7 +164,7 @@
 
 // define prfm path
 #define PRFM_PATH "/"
-
+// define prfm path EBD
 
 // typedef PARAM GRP STRUCTS
 typedef struct PARAM_GROUP_A{
@@ -266,7 +275,14 @@ static int _set_grp_i(modbus_t * ctx);
 static int _set_grp_j(modbus_t * ctx);
 static int _set_grp_k(modbus_t * ctx);
 static int _set_grp_l(modbus_t * ctx);
+static int _set_op_data_single(modbus_t * ctx, int data_no, int pos, int op_spd, int mode, double accel_rate, double deccel_rate, int dwell_time);
 static uint32_t _swap_2byte_order(uint32_t input);
+static void _set_data_not_pc(int data_no);
+
+// GLOBAL Pre-Condition Variables
+static uint32_t DATA_NO_1_32 = 0;
+static uint32_t DATA_NO_33_63 = 0;
+
 
 modbus_t * connect_lrd(const char * addr){
 	modbus_t * ctx = modbus_new_rtu(addr, BAUDRATE, PARITY, DATABIT, STOPBIT);
@@ -367,18 +383,23 @@ int set_sys_param(modbus_t * ctx){
 			uint16_t _not_same = _buff[i] ^ pgs[i];
 			if (_not_same > 0)
 				_write_params = true;
-			printf("%x, %x\n", _buff[i], pgs[i]);
 		}
+	}
+
+	int i = 0;
+	for (i = 0; i < _size; i++){
+		printf("%d\n", _buff[i]);
 	}
 
 	if (_write_params){
 		if (_debug)
 			printf(" >> No match found through read, writing correct sys params...\n");
-		err = modbus_write_register(ctx, GRP_S_ADDR, &pgs[0]);
+		err = modbus_write_register(ctx, GRP_S_ADDR, pgs[0]);
 		if (err < 0){
 			if (_debug)
 				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_register()' :: Failed to set mot rot dir\n");
 		}
+
 		err = modbus_write_registers(ctx, GRP_S_ADDR2, 7, &pgs[1]);
 		if (err < 0){
 			if (_debug)
@@ -387,29 +408,33 @@ int set_sys_param(modbus_t * ctx){
 			if (_debug)
 				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: RESOLVING MISSED WRITES");
 			uint16_t offset_addr = GRP_S_ADDR2 + err;
+			uint16_t _err = err;
 			err = modbus_write_registers(ctx, offset_addr, 7 - err, &pgs[1 + err]);
-			if (err < (7 - err)){
+			if (err < 7 - _err){
 				if (_debug)
 					printf(" >> ERROR could not resolve missed writes");
 			}
 		}
+
 		err = modbus_write_registers(ctx, GRP_S_ADDR3, 5, &pgs[8]);
 		if (err < 0){
 			if (_debug)
 				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: Failed write mot op vars\n");
-		} else if (err > 0 && err < 7){
+		} else if (err > 0 && err < 5){
 			if (_debug)
 				printf(" >> ERROR in 'set_sys_param()' :: 'modbus_write_registers()' :: RESOLVING MISSED WRITES");
-			uint16_t offset_addr = GRP_S_ADDR2 + err;
-			err = modbus_write_registers(ctx, offset_addr, 7 - err, &pgs[1 + err]);
-			if (err < (7 - err)){
+			uint16_t offset_addr = GRP_S_ADDR3 + err;
+			uint16_t _err = err;
+			err = modbus_write_registers(ctx, offset_addr, 5 - err, &pgs[8 + err]);
+			if (err < (5 - _err)){
 				if (_debug)
 					printf(" >> ERROR could not resolve missed writes");
 			}
 		}
 
 	}
-
+	if (_debug)
+		printf(" >> READ indicates parameters are kosher - system ready to go!\n");
 	return 0;
 }
 
@@ -488,7 +513,7 @@ int home_stage(modbus_t * ctx){
 		err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
 		if (err < 0){
 			if (_debug)
-				printf(" >> Cannot communicate with device, stop servo manually!\n");
+				printf(" >> Cannot communicate with device, stop stepper manually!\n");
 		}
 
 		return -1;
@@ -496,6 +521,34 @@ int home_stage(modbus_t * ctx){
 
 	return 0;
 }
+
+
+int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
+	uint32_t _tmp = 1;
+
+	// set upper bound
+	int err = _set_op_data_single(ctx, R_OP_HIGH, b_high, ROP_SPD, ROP_MODE, ROP_ACCEL, ROP_ACCEL, ROP_DWELL);
+	if (err < 0){
+		if (_debug)
+			printf(" >> ERROR in 'set_raster_bounds()' :: '_set_op_data_single()' :: UPPER BOUND IS NOT SET\n");
+		return -1;
+	}
+
+	_set_data_no_pc(R_OP_HIGH);
+
+	// set lower bound
+	err = _set_op_data_single(ctx, R_OP_LOW, b_low, ROP_SPD, ROP_MODE, ROP_ACCEL, ROP_ACCEL, ROP_DWELL);
+	if (err < 0){
+		if (_debug)
+			printf(" >> ERROR in 'set_raster_bounds()' :: '_set_op_data_single()' :: LOWER BOUND IS NOT SET\n");
+		return -1;
+	}
+
+	_set_data_no_pc(R_OP_LOW);
+
+	return 0;
+}
+
 
 
 
@@ -1053,6 +1106,141 @@ static int _set_grp_l(modbus_t * ctx){
 	return 0;
 }
 
+/*
+ * #define OP_POS_ADDR_START 0x0402
+#define OP_SPEED_ADDR_START 0x0502
+#define OP_POS_MODE_ADDR_START 0x0601
+#define OP_MODE_ADDR_START 0x0701
+#define OP_SEQ_MODE_ADDR_START 0x0801
+#define OP_ACCEL_RATE_ADDR_START 0x0902
+#define OP_DECCEL_RATE_ADDR_START 0x0A02
+#define OP_DWELL_TIME_ADDR_START 0x0C01
+ */
+
+static int _set_op_data_single(modbus_t * ctx, int data_no, int pos, int op_spd, int mode, double accel_rate, double deccel_rate, int dwell_time){
+	if (_debug)
+		printf(" >> SETTING DATA NO. %d VALUES\n", data_no);
+
+	uint16_t _offset = data_no - 1;
+	uint16_t POS_ADDR = OP_POS_ADDR_START + _offset * 2;
+	uint16_t SPEED_ADDR = OP_SPEED_ADDR_START + _offset * 2;
+	uint16_t PMODE_ADDR = OP_POS_MODE_ADDR_START + _offset;
+	uint16_t OPMODE_ADDR = OP_MODE_ADDR_START + _offset;
+	uint16_t SEQPOS_ADDR = OP_SEQ_MODE_ADDR_START + _offset;
+	uint16_t ACCELR_ADDR = OP_ACCEL_RATE_ADDR_START + _offset * 2;
+	uint16_t DECCELR_ADDR = OP_DECCEL_RATE_ADDR_START + _offset * 2;
+	uint16_t DTIME_ADDR = OP_DWELL_TIME_ADDR_START + _offset;
+
+	union {
+		uint32_t _int;
+		uint16_t _int16[2];
+	} p;
+
+	union {
+		uint32_t _int;
+		uint16_t _int16[2];
+	} s;
+
+	union {
+		uint32_t _int;
+		uint16_t _int16[2];
+	} ar;
+
+	union {
+		uint32_t _int;
+		uint16_t _int16[2];
+	} dr;
+
+	p._int = _swap_2byte_order(pos);
+	s._int = _swap_2byte_order(op_spd);
+
+	ar._int = _swap_2byte_order(accel_rate * 1000);
+	dr._int = _swap_2byte_order(deccel_rate * 1000);
+
+	// write POS ADDR
+	int err = modbus_write_registers(ctx, POS_ADDR, 2, p._int16);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_registers()' :: POS_ADDR\n");
+		return -1;
+	}
+
+	// WRITE SPD ADDR
+	err = modbus_write_registers(ctx, SPEED_ADDR, 2, s._int16);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_registers()' :: SPEED_ADDR\n");
+		return -1;
+	}
+
+	// WRITE PMODE ADDR
+	err = modbus_write_register(ctx, PMODE_ADDR, mode);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_register()' :: PMODE_ADDR\n");
+		return -1;
+	}
+
+	// WRITE OP_MODE ADDR
+	err = modbus_write_register(ctx, OPMODE_ADDR, 0);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_register()' :: OPMODE_ADDR\n");
+		return -1;
+	}
+
+	// WRITE SEQMODE ADDR
+	err = modbus_write_register(ctx, SEQPOS_ADDR, 0);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_register()' :: SEQPOS_ADDR\n");
+		return -1;
+	}
+
+	// WRITE ACCEL ADDR
+	err = modbus_write_registers(ctx, ACCELR_ADDR, 2, ar._int16);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_registers()' :: ACCEL_ADDR\n");
+		return -1;
+	}
+
+	// WRITE DECCEL ADDR
+	err = modbus_write_registers(ctx, DECCELR_ADDR, 2, dr._int16);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_registers()' :: DECCEL_ADDR\n");
+		return -1;
+	}
+
+	// WRITE DWELL ADDR
+	err = modbus_write_register(ctx, DTIME_ADDR, (uint16_t)dwell_time);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_set_op_data_single()' :: 'modbus_write_register()' :: DTIME_ADDR\n");
+		return -1;
+	}
+
+	if (_debug)
+		printf(" >> OPERATING DATA SET for DATA NO. %d\n", data_no);
+	return err;
+}
+
+static int _start_pos_operation(modbus_t * ctx, int data_no){
+	if (data_no > 63 && data_no < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_start_pos-operation()' :: DATA NUMBER SPECIFIED IS OUT OF BOUNDS\n");
+		return -1;
+	}
+
+	if (_if_data_not_pc(data_no) == false){
+		if (_debug)
+			printf(" >>> ERROR in '_start_pos_operation()' :: PRE_COND HAS NOT BEEN MET, DATA_NO UNSPECIFIED @ %d\n", data_no);
+		return -1;
+	}
+
+
+}
 
 static uint32_t _swap_2byte_order(uint32_t input){
 	uint32_t output = input;
@@ -1062,10 +1250,43 @@ static uint32_t _swap_2byte_order(uint32_t input){
 	return output;
 }
 
+static void _set_data_no_pc(int data_no){
+	int holder;
+	uint32_t _tmp = 1;
 
+	if (data_no > 32 && data_no <= 63){
+		holder = data_no - 32;
+		_tmp = _tmp << (32 - holder);
+		DATA_NO_33_63 = DATA_NO_33_63 | _tmp;
+	} else if (data_no >= 0 && data_no < 33) {
+		_tmp = _tmp - data_no;
+		DATA_NO_1_32 = DATA_NO_1_32 | _tmp;
+	}
+}
 
+static void bool _if_data_not_pc(int data_no){
+	if (data_no > 0 && data_no <= 63){
+		uint32_t _tmp = 1;
+		int holder = data_no;
 
+		if (data_no > 32){
+			holder = holder - 32;
+			_tmp = _tmp << (32 - holder);
 
+			_tmp = DATA_NO_33_63 | _tmp;
+			if (_tmp != DATA_NO_33_63)
+				return false;
+			return true;
+		}
+
+		_tmp = _tmp << (32 - holder);
+		_tmp = _tmp | DATA_NO_1_32;
+		if (_tmp != DATA_NO_1_32)
+			return false;
+		return true;
+	}
+	return false;
+}
 
 
 

@@ -13,11 +13,14 @@ int main(){
 	uint16_t a[2];
 	modbus_read_registers(ctx, 0x021C, 2, a);
 	//printf("%x, %x\n", a[0], a[1]);
-	// int err = set_op_param(ctx);
+	//int err = set_op_param(ctx);
 
 	set_sys_param(ctx);
 
-	home_stage(ctx);
+	//home_stage(ctx);
+
+	set_raster_bounds(ctx, 1000, 3000);
+
 
 	modbus_close(ctx);
 	modbus_free(ctx);
