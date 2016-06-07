@@ -108,7 +108,7 @@
 #define GRP_S11 5
 
 // RASTERING OP CONDS
-#define ROP_SPD 3000
+#define ROP_SPD 7000
 #define ROP_ACCEL 30.000
 #define ROP_MODE 1
 #define ROP_DWELL 0
@@ -118,8 +118,8 @@ modbus_t * connect_lrd(const char * addr);
 int set_sys_param(modbus_t * ctx);
 int set_op_param(modbus_t * ctx);
 int home_stage(modbus_t * ctx);
-
-static int _set_op_data_abs(modbus_t * ctx, int data_no, int pos, int op_spd, double accel_rate, double deccel_rate, int dwell_time);
+int set_raster_bounds(modbus_t * ctx, int b_low, int b_high);
+int demo_raster(modbus_t * ctx);
 
 // Library wide debug variable
 bool _debug;

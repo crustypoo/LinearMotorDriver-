@@ -24,14 +24,6 @@
 // define random register ADDR END
 
 
-// define reserved data_no's
-#define R_OP_HIGH 4
-#define R_OP_LOW 3
-#define HOME 0
-
-// define reserved data_no's end
-
-
 // define Parameter Start ADDR
 /**************************************************************
  * REGISTRY GUIDE
@@ -162,6 +154,26 @@
 // define slave axis number END
 
 
+// define reserved data_no's
+#define R_OP_HIGH 4
+#define R_OP_LOW 3
+#define HOME 0
+// define reserved data_no's end
+
+
+// define STATUS 1 Register Codes
+#define AREA 15
+#define READY 13
+#define HOME_P 11
+#define MOVE 10
+#define STEPOUT 9
+#define START_R 8
+#define ALM 7
+#define WNG 6
+#define M_VARS 0
+// define STATUS 1 Register Codes END
+
+
 // define prfm path
 #define PRFM_PATH "/"
 // define prfm path EBD
@@ -261,6 +273,8 @@ modbus_t * connect_lrd(const char * addr);
 int set_sys_param(modbus_t * ctx);
 int set_op_param(modbus_t * ctx);
 int home_stage(modbus_t * ctx);
+int set_raster_bounds(modbus_t * ctx, int b_low, int b_high);
+int demo_raster(modbus_t * ctx);
 
 // '*.c' only functions
 static int _set_grp_a(modbus_t * ctx);
@@ -276,8 +290,12 @@ static int _set_grp_j(modbus_t * ctx);
 static int _set_grp_k(modbus_t * ctx);
 static int _set_grp_l(modbus_t * ctx);
 static int _set_op_data_single(modbus_t * ctx, int data_no, int pos, int op_spd, int mode, double accel_rate, double deccel_rate, int dwell_time);
+static int _start_pos_operation(modbus_t * ctx, int data_no);
+static int _c_on_cmd(modbus_t * ctx);
+static int _get_status_output(modbus_t * ctx, int _code);
 static uint32_t _swap_2byte_order(uint32_t input);
 static void _set_data_not_pc(int data_no);
+static bool _if_data_not_pc(int data_no);
 
 // GLOBAL Pre-Condition Variables
 static uint32_t DATA_NO_1_32 = 0;
@@ -481,42 +499,39 @@ int home_stage(modbus_t * ctx){
 	const uint16_t _c_on_c = 0b00100000;
 	const uint16_t _stop_c = 0b00010000;
 
-	uint16_t _cmd = _c_on_c << 8;
-	int err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
+	int err = _c_on_cmd(ctx);
 	if (err < 0){
 		if (_debug ) {
-			printf(" >> ERROR in 'home_stage()' :: 'modbus_write_register' :: Initial motor excitation via RS485 failed\n");
+			printf(" >> ERROR in 'home_stage()' :: '_c_on_cmd()' :: Initial motor excitation via RS485 failed\n");
 			printf(" >> HOMING OPERATION FAILED!\n");
 		}
 		return -1;
 	}
 
-	_cmd = (_c_on_c | _home_c);
+	uint16_t _cmd = (_c_on_c | _home_c);
 	_cmd = _cmd << 8;
 	err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
 	if (err < 0){
 		if (_debug) {
-			printf(" >> ERROR in 'home_stage()' :: 'modbus_write_register' :: Home cmd via RS485 was lost\n");
+			printf(" >> ERROR in 'home_stage()' :: 'modbus_write_register()' :: Home cmd via RS485 was lost\n");
 			printf(" >> HOMING OPERATION FAILED!\n");
 		}
 		return -1;
 	}
 
-	_cmd = _c_on_c << 8;
-	err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
+	err = _c_on_cmd(ctx);
 	if (err < 0){
-		if (_debug) {
-			printf(" >> ERROR in 'home_stage()' :: 'modbus_write_register' :: Homing stop via RS485 failed\n");
+		if (_debug ) {
+			printf(" >> ERROR in 'home_stage()' :: '_c_on_cmd()' :: Homing stop via RS485 failed\n");
 			printf(" >> STOPPING MOTOR...\n");
 		}
-		_cmd = _stop_c << 8;
-		err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
+		err = _c_on_cmd(ctx);
 		if (err < 0){
 			if (_debug)
 				printf(" >> Cannot communicate with device, stop stepper manually!\n");
+			return -1;
 		}
-
-		return -1;
+		return 0;
 	}
 
 	return 0;
@@ -524,7 +539,6 @@ int home_stage(modbus_t * ctx){
 
 
 int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
-	uint32_t _tmp = 1;
 
 	// set upper bound
 	int err = _set_op_data_single(ctx, R_OP_HIGH, b_high, ROP_SPD, ROP_MODE, ROP_ACCEL, ROP_ACCEL, ROP_DWELL);
@@ -534,7 +548,7 @@ int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
 		return -1;
 	}
 
-	_set_data_no_pc(R_OP_HIGH);
+	_set_data_not_pc(R_OP_HIGH);
 
 	// set lower bound
 	err = _set_op_data_single(ctx, R_OP_LOW, b_low, ROP_SPD, ROP_MODE, ROP_ACCEL, ROP_ACCEL, ROP_DWELL);
@@ -544,12 +558,42 @@ int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
 		return -1;
 	}
 
-	_set_data_no_pc(R_OP_LOW);
+	_set_data_not_pc(R_OP_LOW);
 
 	return 0;
 }
 
 
+int demo_raster(modbus_t * ctx){
+	int _move;
+	int _ready;
+
+	int i;
+	for (i = 0; i < 100; i++){
+		_move = _get_status_output(ctx, MOVE);
+		_ready = _get_status_output(ctx, READY);
+		while (_move && !_ready){
+			_move = _get_status_output(ctx, MOVE);
+			_ready = _get_status_output(ctx, READY);
+		}
+
+		_c_on_cmd(ctx);
+		_start_pos_operation(ctx, R_OP_HIGH);
+		_c_on_cmd(ctx);
+
+		_move = _get_status_output(ctx, MOVE);
+		_ready = _get_status_output(ctx, READY);
+		while (_move && !_ready){
+			_move = _get_status_output(ctx, MOVE);
+			_ready = _get_status_output(ctx, READY);
+		}
+
+		_c_on_cmd(ctx);
+		_start_pos_operation(ctx, R_OP_LOW);
+		_c_on_cmd(ctx);
+	}
+	return 0;
+}
 
 
 static int _set_grp_a(modbus_t * ctx){
@@ -1239,7 +1283,57 @@ static int _start_pos_operation(modbus_t * ctx, int data_no){
 		return -1;
 	}
 
+	const uint16_t c_on = 0b00100000;
+	const uint16_t start = 0b00000001;
 
+	uint16_t _cmd = ((start | c_on) << 8) | data_no;
+	int err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_start_pos_operation()' :: 'modbus_write_register()' :: Could not write cmd to start data no. %d operation\n", data_no);
+		return -1;
+	}
+	return 0;
+}
+
+static int _c_on_cmd(modbus_t * ctx){
+	const uint16_t _c_on = 0b00100000;
+
+	uint16_t _cmd = _c_on << 8;
+	int err = modbus_write_register(ctx, CMD_ONE_ADDR, _cmd);
+	if (err < 0){
+		if (_debug ) {
+			printf(" >>> ERROR in '_c_on_cmd()' :: 'modbus_write_register()' :: Initial motor excitation via RS485 failed\n");
+		}
+		return -1;
+	}
+
+	return 0;
+}
+
+static int _get_status_output(modbus_t * ctx, int _code){
+	uint16_t _buff;
+	int err = modbus_read_registers(ctx, STAT_ONE_ADDR, 1, &_buff);
+	if (err < 0){
+		if (_debug)
+			printf(" >>> ERROR in '_status_1_output()' :: 'modbus_read_registers()' :: Unable to read status 1 register\n");
+		return -1;
+	}
+
+	printf("%x\n", _buff);
+
+	if (_code != M_VARS){
+		uint16_t _tmp = 1 << _code;
+		_tmp = _tmp | _buff;
+		if (_tmp != _buff){
+			return 0;
+		}
+		return 1;
+	}
+
+	int _offset = 16- 6;
+	uint16_t _tmp = _buff << _offset;
+	return (_tmp >> _offset);
 }
 
 static uint32_t _swap_2byte_order(uint32_t input){
@@ -1250,7 +1344,7 @@ static uint32_t _swap_2byte_order(uint32_t input){
 	return output;
 }
 
-static void _set_data_no_pc(int data_no){
+static void _set_data_not_pc(int data_no){
 	int holder;
 	uint32_t _tmp = 1;
 
@@ -1264,7 +1358,7 @@ static void _set_data_no_pc(int data_no){
 	}
 }
 
-static void bool _if_data_not_pc(int data_no){
+static bool _if_data_not_pc(int data_no){
 	if (data_no > 0 && data_no <= 63){
 		uint32_t _tmp = 1;
 		int holder = data_no;

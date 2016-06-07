@@ -15,15 +15,17 @@ int main(){
 	//printf("%x, %x\n", a[0], a[1]);
 	//int err = set_op_param(ctx);
 
-	set_sys_param(ctx);
+	//set_sys_param(ctx);
 
 	//home_stage(ctx);
 
-	set_raster_bounds(ctx, 1000, 3000);
+	set_raster_bounds(ctx, 250, 3600);
 
+	demo_raster(ctx);
 
-	modbus_close(ctx);
-	modbus_free(ctx);
-
+	if (ctx != NULL){
+		modbus_close(ctx);
+		modbus_free(ctx);
+	}
 	return EXIT_SUCCESS;
 }
