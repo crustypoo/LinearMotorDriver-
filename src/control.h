@@ -103,12 +103,12 @@
 #define GRP_S6 1
 #define GRP_S7 1
 #define GRP_S8 0
-#define GRP_S9 100.0
+#define GRP_S9 10.0
 #define GRP_S10 0
 #define GRP_S11 5
 
 // RASTERING OP CONDS
-#define ROP_SPD 7000
+#define ROP_SPD 3000
 #define ROP_ACCEL 30.000
 #define ROP_MODE 1
 #define ROP_DWELL 0

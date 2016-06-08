@@ -5,6 +5,12 @@
  *      Author: aliu
  */
 
+//TODO: Finish Pre_conditional screening
+//TODO: Finish err propagation chain architecture
+	//SUB TODO: Design err support functions
+
+// TODO: Clean up vestigial code
+
 #include "control.h"
 
 // define random register ADDR
@@ -297,11 +303,16 @@ static uint32_t _swap_2byte_order(uint32_t input);
 static void _set_data_not_pc(int data_no);
 static bool _if_data_not_pc(int data_no);
 
+
 // GLOBAL Pre-Condition Variables
 static uint32_t DATA_NO_1_32 = 0;
 static uint32_t DATA_NO_33_63 = 0;
+static bool CONNECT_EST = false;
+static bool OP_PARAM_SET = false;
+static bool SYS_PARAM_SET = false;
 
-
+// Function to connect the LRD driver and return libmodbus context
+// to connection
 modbus_t * connect_lrd(const char * addr){
 	modbus_t * ctx = modbus_new_rtu(addr, BAUDRATE, PARITY, DATABIT, STOPBIT);
 	if (ctx == NULL){
@@ -341,10 +352,18 @@ modbus_t * connect_lrd(const char * addr){
 		return NULL;
 	}
 
+	CONNECT_EST = true;
 	return ctx;
 }
 
+// Set LRD driver system params for operation and communications
 int set_sys_param(modbus_t * ctx){
+	if (!CONNECT_EST){
+		if (_debug)
+			printf(" > PRE-CONDITIONS UN-MET, TERMINATING FUNCTION\n");
+		return -1;
+	}
+
 	int _size = 13;
 
 	uint16_t pgs[_size];
@@ -453,10 +472,19 @@ int set_sys_param(modbus_t * ctx){
 	}
 	if (_debug)
 		printf(" >> READ indicates parameters are kosher - system ready to go!\n");
+	SYS_PARAM_SET = true;
 	return 0;
 }
 
+// Set operating parameters for LRD driver, including safety states, Homing mode
+// operating speeds, and I/O modes
 int set_op_param(modbus_t * ctx){
+	if (!CONNECT_EST){
+		if (_debug)
+			printf(" > PRE-CONDITIONS UN-MET, TERMINATING FUNCTION\n");
+		return -1;
+	}
+
 	int issue_track = 0;
 
 	if (_set_grp_a(ctx) < 0)
@@ -491,9 +519,11 @@ int set_op_param(modbus_t * ctx){
 		return -1;
 	}
 
+	OP_PARAM_SET = true;
 	return 0;
 }
 
+// Home the Keyence Sensor Head Stage
 int home_stage(modbus_t * ctx){
 	const uint16_t _home_c = 0b00001000;
 	const uint16_t _c_on_c = 0b00100000;
@@ -537,7 +567,7 @@ int home_stage(modbus_t * ctx){
 	return 0;
 }
 
-
+// Set up the high and low bounds for the rastering motion
 int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
 
 	// set upper bound
@@ -563,17 +593,18 @@ int set_raster_bounds(modbus_t * ctx, int b_low, int b_high){
 	return 0;
 }
 
-
+// Demo function for rastering motion
+// TODO : v DEMO FUNCTION - REMOVE LATER v
 int demo_raster(modbus_t * ctx){
 	int _move;
 	int _ready;
 
 	int i;
-	for (i = 0; i < 100; i++){
-		_move = _get_status_output(ctx, MOVE);
+	for (i = 0; i < 10000; i++){
+		//_move = _get_status_output(ctx, MOVE);
 		_ready = _get_status_output(ctx, READY);
-		while (_move && !_ready){
-			_move = _get_status_output(ctx, MOVE);
+		while ( !_ready){
+			//_move = _get_status_output(ctx, MOVE);
 			_ready = _get_status_output(ctx, READY);
 		}
 
@@ -583,8 +614,8 @@ int demo_raster(modbus_t * ctx){
 
 		_move = _get_status_output(ctx, MOVE);
 		_ready = _get_status_output(ctx, READY);
-		while (_move && !_ready){
-			_move = _get_status_output(ctx, MOVE);
+		while (!_ready){
+			//_move = _get_status_output(ctx, MOVE);
 			_ready = _get_status_output(ctx, READY);
 		}
 
@@ -595,7 +626,8 @@ int demo_raster(modbus_t * ctx){
 	return 0;
 }
 
-
+// Function to set the contiguous group A operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_a(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP A VALUES\n");
@@ -647,6 +679,8 @@ static int _set_grp_a(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group B operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_b(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP B VALUES\n");
@@ -697,6 +731,8 @@ static int _set_grp_b(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group C operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_c(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP C VALUES\n");
@@ -773,7 +809,8 @@ static int _set_grp_c(modbus_t * ctx){
 	return 0;
 }
 
-
+// Function to set the contiguous group D operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_d(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP D VALUES\n");
@@ -823,6 +860,8 @@ static int _set_grp_d(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group E operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_e(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP E VALUES\n");
@@ -871,6 +910,8 @@ static int _set_grp_e(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group F operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_f(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GRP F VALUES\n");
@@ -921,6 +962,8 @@ static int _set_grp_f(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group G operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_g(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP G VALUES\n");
@@ -994,7 +1037,8 @@ static int _set_grp_g(modbus_t * ctx){
 	return 0;
 }
 
-
+// Function to set the contiguous group H operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_h(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP H VALUES\n");
@@ -1021,6 +1065,8 @@ static int _set_grp_h(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group I operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_i(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP I VALUES\n");
@@ -1047,6 +1093,8 @@ static int _set_grp_i(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group J operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_j(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP J VALUES\n");
@@ -1073,6 +1121,8 @@ static int _set_grp_j(modbus_t * ctx){
 	return 0;
 }
 
+// Function to set the contiguous group K operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_k(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP K VALUES\n");
@@ -1112,7 +1162,8 @@ static int _set_grp_k(modbus_t * ctx){
 	return 0;
 }
 
-
+// Function to set the contiguous group L operating parameters
+// Called by 'set_op_param()' function
 static int _set_grp_l(modbus_t * ctx){
 	if (_debug)
 		printf(" >> SETTING GROUP L VALUES\n");
@@ -1150,17 +1201,7 @@ static int _set_grp_l(modbus_t * ctx){
 	return 0;
 }
 
-/*
- * #define OP_POS_ADDR_START 0x0402
-#define OP_SPEED_ADDR_START 0x0502
-#define OP_POS_MODE_ADDR_START 0x0601
-#define OP_MODE_ADDR_START 0x0701
-#define OP_SEQ_MODE_ADDR_START 0x0801
-#define OP_ACCEL_RATE_ADDR_START 0x0902
-#define OP_DECCEL_RATE_ADDR_START 0x0A02
-#define OP_DWELL_TIME_ADDR_START 0x0C01
- */
-
+// Function to set a single operating data register for programed moves
 static int _set_op_data_single(modbus_t * ctx, int data_no, int pos, int op_spd, int mode, double accel_rate, double deccel_rate, int dwell_time){
 	if (_debug)
 		printf(" >> SETTING DATA NO. %d VALUES\n", data_no);
@@ -1270,6 +1311,7 @@ static int _set_op_data_single(modbus_t * ctx, int data_no, int pos, int op_spd,
 	return err;
 }
 
+// Function sends cmd to LRD driver to begin programmed movement
 static int _start_pos_operation(modbus_t * ctx, int data_no){
 	if (data_no > 63 && data_no < 0){
 		if (_debug)
@@ -1296,6 +1338,7 @@ static int _start_pos_operation(modbus_t * ctx, int data_no){
 	return 0;
 }
 
+// Function sends cmd to excite LRD driver
 static int _c_on_cmd(modbus_t * ctx){
 	const uint16_t _c_on = 0b00100000;
 
@@ -1311,6 +1354,7 @@ static int _c_on_cmd(modbus_t * ctx){
 	return 0;
 }
 
+// Function ascertain the desired state of a single status variable from LRD driver
 static int _get_status_output(modbus_t * ctx, int _code){
 	uint16_t _buff;
 	int err = modbus_read_registers(ctx, STAT_ONE_ADDR, 1, &_buff);
@@ -1336,6 +1380,7 @@ static int _get_status_output(modbus_t * ctx, int _code){
 	return (_tmp >> _offset);
 }
 
+// Support Function to swap to the order of a 2 byte memory block
 static uint32_t _swap_2byte_order(uint32_t input){
 	uint32_t output = input;
 
@@ -1344,6 +1389,8 @@ static uint32_t _swap_2byte_order(uint32_t input){
 	return output;
 }
 
+// Support function to set binary values for pre-cursor global variable (DATA_NO_1_32 or DATA_NO_33_63)
+// that indicates whether or not an operating data regsiter is empty or filled
 static void _set_data_not_pc(int data_no){
 	int holder;
 	uint32_t _tmp = 1;
@@ -1358,6 +1405,8 @@ static void _set_data_not_pc(int data_no){
 	}
 }
 
+// Support function to parse the previously mentioned pre-conditional variables to see if
+// data reg number represented by "int data_no" has indeed been filled
 static bool _if_data_not_pc(int data_no){
 	if (data_no > 0 && data_no <= 63){
 		uint32_t _tmp = 1;
