@@ -10,6 +10,8 @@
 	//SUB TODO: Design err support functions
 
 // TODO: Clean up vestigial code
+// TODO: Detailed comments
+// TODO: ALM state and ALM RESET functions - IMPORTANT
 
 #include "control.h"
 
